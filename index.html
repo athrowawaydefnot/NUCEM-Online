@@ -317,28 +317,8 @@
             ⏱️ <span id="time">00:00</span>
         </div>
 
-        <!-- Setup Screen -->
-        <div class="card setup-screen" id="setupScreen">
-            <h2>⚙️ Nastavenie aplikácie</h2>
-            <p style="margin-bottom: 20px; color: #666;">Pre používanie aplikácie je potrebné nastaviť Supabase pripojenie.</p>
-            
-            <div class="info-box">
-                <strong>Kde nájdem tieto údaje?</strong><br>
-                1. Prejdite na <a href="https://supabase.com" target="_blank">supabase.com</a><br>
-                2. Vytvorte nový projekt (bezplatný)<br>
-                3. V Settings → API nájdete URL a anon key
-            </div>
-
-            <input type="text" id="supabaseUrl" placeholder="Supabase URL (https://xxx.supabase.co)">
-            <input type="text" id="supabaseKey" placeholder="Supabase Anon Key">
-            <input type="text" id="openaiKey" placeholder="OpenAI API Key (sk-proj-...)">
-            
-            <br><br>
-            <button class="button" id="saveConfigBtn" onclick="window.saveConfigHandler()">💾 Uložiť a pokračovať</button>
-        </div>
-
-        <!-- Main App (initially hidden) -->
-        <div id="mainApp" class="hidden">
+        <!-- Main App -->
+        <div id="mainApp">
             <!-- Header -->
             <div class="header">
                 <h1>📚 Slovenský jazyk a literatúra</h1>
@@ -413,50 +393,13 @@
         // ============================================
         
         let supabaseClient;
-        let config = {
-            supabaseUrl: '',
-            supabaseKey: '',
-            openaiKey: ''
+        
+        // Hardcoded configuration - keys are set directly
+        const config = {
+            supabaseUrl: 'https://xbptbimgambfeiilymba.supabase.co',
+            supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhicHRiaW1nYW1iZmVpaWx5bWJhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzNjcyNTQsImV4cCI6MjA4NTk0MzI1NH0.hLbPMevuO6HVIlyCVYor7s0fu12XHgo5jB0JaNLf-UQ',
+            openaiKey: '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'  // ⚠️ REPLACE THIS WITH YOUR ACTUAL KEY
         };
-
-        // Load config from localStorage
-        function loadConfig() {
-            const saved = localStorage.getItem('maturita_config');
-            if (saved) {
-                config = JSON.parse(saved);
-                initializeSupabase();
-                return true;
-            }
-            return false;
-        }
-
-        function saveConfig() {
-            console.log('saveConfig called!');
-            const url = document.getElementById('supabaseUrl').value.trim();
-            const key = document.getElementById('supabaseKey').value.trim();
-            const openai = document.getElementById('openaiKey').value.trim();
-
-            console.log('Values:', { url, key: key.substring(0, 20) + '...', openai: openai.substring(0, 20) + '...' });
-
-            if (!url || !key || !openai) {
-                alert('Prosím vyplňte všetky polia!');
-                return;
-            }
-
-            config = { supabaseUrl: url, supabaseKey: key, openaiKey: openai };
-            localStorage.setItem('maturita_config', JSON.stringify(config));
-            
-            console.log('Config saved, initializing Supabase...');
-            initializeSupabase();
-            
-            console.log('Hiding setup screen...');
-            document.getElementById('setupScreen').classList.add('hidden');
-            document.getElementById('mainApp').classList.remove('hidden');
-            init();
-        }
-
-        // Global handler for onclick
-        window.saveConfigHandler = saveConfig;
 
         function initializeSupabase() {
             supabaseClient = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
@@ -1073,17 +1016,11 @@ Vráť VÝLUČNE validný JSON bez akýchkoľvek MarkDown blokov, úvodných tex
 
         // Start app
         window.addEventListener('DOMContentLoaded', () => {
-            // Setup save config button
-            const saveBtn = document.getElementById('saveConfigBtn');
-            if (saveBtn) {
-                saveBtn.addEventListener('click', saveConfig);
-            }
-
-            if (loadConfig()) {
-                document.getElementById('setupScreen').classList.add('hidden');
-                document.getElementById('mainApp').classList.remove('hidden');
-                init();
-            }
+            // Initialize Supabase immediately
+            initializeSupabase();
+            
+            // Initialize the app
+            init();
         });
     </script>
 </body>
