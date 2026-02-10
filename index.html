@@ -91,10 +91,50 @@
             border: 1px solid #e0e0e0;
         }
 
+        .question.correct { 
+            border-left: 4px solid #4caf50; 
+            background: #f1f8f4; 
+        }
+        
+        .question.incorrect { 
+            border-left: 4px solid #f44336; 
+            background: #fef5f5; 
+        }
+
         .question-text {
             font-weight: 600;
             color: #333;
             margin-bottom: 12px;
+        }
+
+        .answer-indicator {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .answer-indicator.correct { 
+            background: #c8e6c9; 
+            color: #2e7d32; 
+        }
+        
+        .answer-indicator.incorrect { 
+            background: #ffcdd2; 
+            color: #c62828; 
+        }
+
+        .option.correct-answer { 
+            background: #c8e6c9; 
+            padding: 5px; 
+            border-radius: 5px; 
+            font-weight: 600; 
+        }
+        
+        .option.user-wrong { 
+            background: #ffcdd2; 
+            padding: 5px; 
+            border-radius: 5px; 
         }
 
         .options {
@@ -363,8 +403,18 @@
                 <div id="userRanking"></div>
 
                 <div style="text-align: center; margin-top: 20px;">
-                    <button class="button" onclick="showLeaderboard()">🏆 Pozrieť celý rebríček</button>
-                    <button class="button share-button" onclick="shareResults()">📤 Zdieľať výsledok</button>
+                    <button class="button" onclick="viewAnswers()">📝 Pozrieť odpovede</button>
+                    <button class="button button-secondary" style="margin-left: 10px;" onclick="showLeaderboard()">🏆 Rebríček</button>
+                    <button class="button share-button" onclick="shareResults()">📤 Zdieľať</button>
+                </div>
+            </div>
+
+            <!-- Review Screen -->
+            <div class="card hidden" id="reviewScreen">
+                <h2 style="color: #667eea; margin-bottom: 20px;">📝 Prehľad odpovedí</h2>
+                <div id="reviewContent"></div>
+                <div style="text-align: center; margin-top: 20px;">
+                    <button class="button" onclick="showScreen('resultsScreen')">← Späť na výsledky</button>
                 </div>
             </div>
 
@@ -718,13 +768,14 @@ Vráť VÝLUČNE validný JSON bez akýchkoľvek MarkDown blokov, úvodných tex
         let startTime = null;
         let timerInterval = null;
         let userAnswers = {};
+        let testResults = null;
 
         // ============================================
         // UI FUNCTIONS
         // ============================================
         
         function showScreen(screenId) {
-            ['welcomeScreen', 'testScreen', 'resultsScreen', 'leaderboardScreen', 'loadingScreen'].forEach(id => {
+            ['welcomeScreen', 'testScreen', 'resultsScreen', 'reviewScreen', 'leaderboardScreen', 'loadingScreen'].forEach(id => {
                 document.getElementById(id).classList.add('hidden');
             });
             document.getElementById(screenId).classList.remove('hidden');
@@ -835,16 +886,18 @@ Vráť VÝLUČNE validný JSON bez akýchkoľvek MarkDown blokov, úvodných tex
                         questionDiv.innerHTML = `
                             <div class="question-text">${qIdx + 1}. ${q.question}</div>
                             <div class="options">
-                                ${q.options.map((opt, optIdx) => `
+                                ${q.options.map((opt, optIdx) => {
+                                    const letter = String.fromCharCode(65 + optIdx); // A, B, C, D
+                                    return `
                                     <div class="option">
                                         <input type="radio" 
                                                name="${questionId}" 
-                                               id="${questionId}_${optIdx}"
-                                               value="${opt}"
-                                               onchange="saveAnswer('${questionId}', '${opt}')">
-                                        <label for="${questionId}_${optIdx}">${opt}</label>
+                                               id="${questionId}_${letter}"
+                                               value="${letter}"
+                                               onchange="saveAnswer('${questionId}', '${letter}')">
+                                        <label for="${questionId}_${letter}">${opt}</label>
                                     </div>
-                                `).join('')}
+                                `}).join('')}
                             </div>
                         `;
                     } else {
@@ -891,25 +944,35 @@ Vráť VÝLUČNE validný JSON bez akýchkoľvek MarkDown blokov, úvodných tex
             stopTimer();
             const timeSeconds = getElapsedSeconds();
 
-            // Calculate score
+            // Calculate score and store results
             let correct = 0;
+            const results = [];
+            
             currentTest.blocks.forEach((block, blockIdx) => {
                 block.questions.forEach((q, qIdx) => {
                     const questionId = `q_${blockIdx}_${qIdx}`;
-                    const userAnswer = userAnswers[questionId];
+                    const userAnswer = userAnswers[questionId] || '';
+                    let isCorrect = false;
                     
-                    if (!userAnswer) return;
-
                     if (q.type === 'multiple_choice') {
-                        if (userAnswer === q.correct) correct++;
+                        isCorrect = userAnswer === q.correct;
                     } else {
-                        // Normalize for flexible matching
-                        if (normalizeAnswer(userAnswer) === normalizeAnswer(q.correct)) {
-                            correct++;
-                        }
+                        isCorrect = normalizeAnswer(userAnswer) === normalizeAnswer(q.correct);
                     }
+                    
+                    if (isCorrect) correct++;
+                    
+                    results.push({
+                        blockIdx,
+                        qIdx,
+                        question: q,
+                        userAnswer,
+                        correct: isCorrect
+                    });
                 });
             });
+
+            testResults = { results, correct, totalQuestions, timeSeconds };
 
             // Show results
             document.getElementById('finalScore').textContent = `${correct}/${totalQuestions}`;
@@ -956,6 +1019,76 @@ Vráť VÝLUČNE validný JSON bez akýchkoľvek MarkDown blokov, úvodných tex
             `;
 
             showScreen('resultsScreen');
+        }
+
+        function viewAnswers() {
+            if (!testResults) return;
+            
+            const container = document.getElementById('reviewContent');
+            container.innerHTML = '';
+            
+            let currentBlock = -1;
+            
+            testResults.results.forEach(result => {
+                const block = currentTest.blocks[result.blockIdx];
+                
+                // Add block header if new block
+                if (result.blockIdx !== currentBlock) {
+                    currentBlock = result.blockIdx;
+                    const blockHeader = document.createElement('div');
+                    blockHeader.className = 'text-block';
+                    blockHeader.innerHTML = `
+                        <h3>Ukážka ${result.blockIdx + 1}: ${block.title}</h3>
+                        ${block.author ? `<p class="author-info">${block.author}</p>` : ''}
+                    `;
+                    container.appendChild(blockHeader);
+                }
+                
+                // Add question review
+                const questionDiv = document.createElement('div');
+                questionDiv.className = `question ${result.correct ? 'correct' : 'incorrect'}`;
+                
+                const q = result.question;
+                
+                if (q.type === 'multiple_choice') {
+                    const optionsHTML = q.options.map((opt, idx) => {
+                        const letter = String.fromCharCode(65 + idx);
+                        const isUserAnswer = result.userAnswer === letter;
+                        const isCorrectAnswer = q.correct === letter;
+                        
+                        let className = 'option';
+                        if (isCorrectAnswer) className += ' correct-answer';
+                        else if (isUserAnswer && !result.correct) className += ' user-wrong';
+                        
+                        let marker = '';
+                        if (isCorrectAnswer) marker = ' ✓';
+                        if (isUserAnswer && !result.correct) marker = ' ✗';
+                        
+                        return `<div class="${className}">${opt}${marker}</div>`;
+                    }).join('');
+                    
+                    questionDiv.innerHTML = `
+                        <div class="question-text">${result.qIdx + 1}. ${q.question}</div>
+                        <div class="options">${optionsHTML}</div>
+                        <div class="answer-indicator ${result.correct ? 'correct' : 'incorrect'}">
+                            ${result.correct ? '✓ Správne' : `✗ Nesprávne - Správna odpoveď: ${q.correct}`}
+                        </div>
+                    `;
+                } else {
+                    questionDiv.innerHTML = `
+                        <div class="question-text">${result.qIdx + 1}. ${q.question}</div>
+                        <div class="answer-indicator ${result.correct ? 'correct' : 'incorrect'}">
+                            Tvoja odpoveď: <strong>${result.userAnswer || '(bez odpovede)'}</strong><br>
+                            Správna odpoveď: <strong>${q.correct}</strong>
+                            ${result.correct ? ' ✓' : ' ✗'}
+                        </div>
+                    `;
+                }
+                
+                container.appendChild(questionDiv);
+            });
+            
+            showScreen('reviewScreen');
         }
 
         async function showLeaderboard() {
