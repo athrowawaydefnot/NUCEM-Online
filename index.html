@@ -522,14 +522,197 @@
                     return [];
                 }
                 return data;
+            },
+
+            async getRandomQuestions(textType, count) {
+                // Get questions that match text type and haven't been used recently
+                const sevenDaysAgo = new Date();
+                sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+                const cutoffDate = sevenDaysAgo.toISOString().split('T')[0];
+
+                // Query for questions matching text type or 'any'
+                const { data, error } = await supabaseClient
+                    .from('question_templates')
+                    .select('*')
+                    .or(`last_used.is.null,last_used.lt.${cutoffDate}`)
+                    .order('usage_count', { ascending: true })
+                    .limit(count * 4); // Get extra for filtering
+
+                if (error) {
+                    console.error('Error fetching questions:', error);
+                    return [];
+                }
+
+                // Filter in JavaScript for array contains (Supabase array queries are complex)
+                const filtered = data.filter(q => 
+                    q.requires_text_type.includes(textType) || q.requires_text_type.includes('any')
+                );
+
+                // Shuffle
+                const shuffled = filtered.sort(() => Math.random() - 0.5);
+                
+                // Ensure mix of MC and SA (5 MC, 3 SA per ukážka)
+                const mc = shuffled.filter(q => q.question_type === 'multiple_choice').slice(0, 5);
+                const sa = shuffled.filter(q => q.question_type === 'short_answer').slice(0, 3);
+                
+                return [...mc, ...sa];
+            },
+
+            async updateQuestionUsage(questionIds) {
+                const today = new Date().toISOString().split('T')[0];
+                
+                for (const id of questionIds) {
+                    const { data } = await supabaseClient
+                        .from('question_templates')
+                        .select('usage_count')
+                        .eq('id', id)
+                        .single();
+                    
+                    await supabaseClient
+                        .from('question_templates')
+                        .update({ 
+                            usage_count: (data?.usage_count || 0) + 1,
+                            last_used: today 
+                        })
+                        .eq('id', id);
+                }
             }
         };
 
         // ============================================
-        // AI TEST GENERATION (ENHANCED WITH REAL NÚCEM EXAMPLES)
+        // AI TEST GENERATION (USING QUESTION BANK)
         // ============================================
         
+        const TEXT_TYPES = [
+            {type: 'prose', desc: 'Klasická slovenská próza', authors: 'Milo Urban, Jozef Cíger Hronský, Martin Kukučín, Dobroslav Chrobák, Ľudovít Fulka, Margita Figuli'},
+            {type: 'poetry', desc: 'Slovenská poézia', authors: 'Ivan Krasko, Ján Smrek, Andrej Sládkovič, Pavol Országh Hviezdoslav, Milan Rúfus'},
+            {type: 'prose', desc: 'Svetová próza', authors: 'Erich Maria Remarque, Ernest Hemingway, Franz Kafka, Fjodor Dostojevskij'},
+            {type: 'poetry', desc: 'Svetová poézia', authors: 'Alexander Puškin, Lord Byron, Charles Baudelaire, Pablo Neruda'},
+            {type: 'journalism', desc: 'Publicistický text', authors: 'náučno-populárny článok o vede, zdraví, psychológii, spoločnosti'},
+            {type: 'drama', desc: 'Slovenská dráma', authors: 'Jozef Gregor Tajovský, Ivan Stodola'},
+            {type: 'any', desc: 'Esej/úvaha', authors: 'súčasná esej o identite, spoločnosti, umení'},
+            {type: 'any', desc: 'Literárna kritika', authors: 'recenzia alebo kritická analýza'}
+        ];
+
+        async function generateSingleBlock(blockIndex) {
+            const textInfo = TEXT_TYPES[blockIndex];
+            
+            // 1. GET 8 QUESTIONS FROM DATABASE
+            const questions = await dbStorage.getRandomQuestions(textInfo.type, 8);
+            
+            if (questions.length < 8) {
+                throw new Error(`Not enough questions for ${textInfo.type}. Found ${questions.length}, need 8.`);
+            }
+
+            // 2. BUILD PROMPT FOR AI (only generate text + answer questions)
+            const questionList = questions.map((q, idx) => 
+                `${idx + 1}. [${q.question_type === 'multiple_choice' ? 'MC' : 'SA'}] ${q.question_template}`
+            ).join('\n');
+
+            const aiPrompt = `Vygeneruj textovú ukážku pre NÚCEM test.
+
+TYP: ${textInfo.desc}
+AUTOR/TÉMA: Vyber náhodne z: ${textInfo.authors}
+DĹŽKA: 200-300 slov
+
+Potom ODPOVEDZ na tieto KONKRÉTNE otázky o tvojom texte:
+
+${questionList}
+
+FORMÁT ODPOVEDE - vráť validný JSON:
+{
+  "title": "Názov diela/textu",
+  "text": "Celý text ukážky (200-300 slov). Použi [[text]] na zvýraznenie ak treba.",
+  "author": "Meno autora",
+  "genre": "${textInfo.type}",
+  "questions": [
+    {
+      "id": 1,
+      "question": "presný text otázky",
+      "type": "multiple_choice",
+      "options": ["(A) možnosť 1", "(B) možnosť 2", "(C) možnosť 3", "(D) možnosť 4"],
+      "correct": "A"
+    },
+    {
+      "id": 2,
+      "question": "presný text otázky",
+      "type": "short_answer",
+      "correct": "presná odpoveď"
+    }
+  ]
+}
+
+PRAVIDLÁ:
+- Text MUSÍ byť 200-300 slov, realistický
+- Multiple choice: 4 možnosti, odpoveď iba "A", "B", "C" alebo "D"
+- Short answer: PRESNÁ odpoveď (1-3 slová)
+- Ak otázka vyžaduje gramatiku (spodobovanie, slovný druh), text MUSÍ obsahovať príklady
+- Ak otázka vyžaduje literárny prostriedok (metafora), text MUSÍ ho obsahovať
+- Použitím [[text]] v texte vytvoríš zvýraznenie
+
+Vráť VÝLUČNE validný JSON bez markdown blokov.`;
+
+            // 3. CALL OPENAI
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${config.openaiKey}`
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o',
+                    messages: [
+                        { role: 'system', content: 'Si expert na tvorbu textov pre slovenské maturitné testy NÚCEM. Vraciaš VÝLUČNE validný JSON.' },
+                        { role: 'user', content: aiPrompt }
+                    ],
+                    temperature: 0.9,
+                    response_format: { type: "json_object" }
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error?.message || 'OpenAI API error');
+            }
+
+            const result = await response.json();
+            const content = result.choices[0].message.content;
+            
+            // Parse JSON
+            let parsed;
+            try {
+                parsed = JSON.parse(content);
+            } catch (e) {
+                const jsonMatch = content.match(/```json\n?([\s\S]*?)\n?```/);
+                if (jsonMatch) {
+                    parsed = JSON.parse(jsonMatch[1]);
+                } else {
+                    throw new Error('Failed to parse AI response');
+                }
+            }
+            
+            return {
+                block: parsed,
+                questionIds: questions.map(q => q.id)
+            };
+        }
+
         async function generateTest() {
+            const blocks = [];
+            const allQuestionIds = [];
+            
+            // Generate all 8 blocks
+            for (let i = 0; i < 8; i++) {
+                const { block, questionIds } = await generateSingleBlock(i);
+                blocks.push(block);
+                allQuestionIds.push(...questionIds);
+            }
+            
+            // Track question usage
+            await dbStorage.updateQuestionUsage(allQuestionIds);
+            
+            return { blocks };
+        }
             const systemPrompt = `Si expert na tvorbu testov pre slovenskú maturity (NÚCEM - Slovenský jazyk a literatúra, externá časť).
 
 FORMÁT TESTU (PRESNE DODRŽAŤ):
@@ -539,67 +722,135 @@ FORMÁT TESTU (PRESNE DODRŽAŤ):
 - 40 otázok = multiple choice (4 možnosti, 1 správna)
 - 24 otázok = short answer (krátka odpoveď, 1-3 slová)
 
-ROZDELENIE TEXTOVÝCH UKÁŽOK:
-1. Klasická slovenská próza (realizmus/medzivojnové obdobie) - autor: Milo Urban, Jozef Cíger Hronský, Dobroslav Chrobák
-2. Slovenská poézia (romantizmus/moderna) - autor: Andrej Sládkovič, Ján Smrek, Ivan Krasko
-3. Svetová próza (19.-20. storočie) - autor: Erich Maria Remarque, William Shakespeare
-4. Svetová poézia (romantizmus) - autor: Alexander Sergejevič Puškin, Lord Byron
-5. Publicistický text (náučno-populárny článok) - téma: veda, zdravie, psychológia
-6. Slovenská dráma - autor: Jozef Gregor Tajovský
-7. Esej/úvaha (súčasná literatúra)
-8. Literárna kritika/recenzia
+ROZDELENIE TEXTOVÝCH UKÁŽOK (VYBER NÁHODNE Z POOLOV):
 
-DISTRIBÚCIA OTÁZOK (PRESNE):
-- 35% porozumenie textu (comprehension)
-- 25% literárna teória a história
-- 20% gramatika a syntax
-- 15% lexikológia a štýl
-- 5% spracovanie informácií
+1. KLASICKÁ SLOVENSKÁ PRÓZA - vyber náhodne jedného autora:
+   - Milo Urban, Jozef Cíger Hronský, Martin Kukučín, Dobroslav Chrobák, Ľudovít Fulka, Margita Figuli, Jozef Gregor Tajovský, Ladislav Nádaši-Jégé, Božena Slančíková-Timrava, Janko Jesenský
+
+2. SLOVENSKÁ POÉZIA - vyber náhodne jedného autora:
+   - Ivan Krasko, Ján Smrek, Andrej Sládkovič, Pavol Országh Hviezdoslav, Milan Rúfus, Janko Kráľ, Svetlozár Hurban Vajanský, Laco Novomeský, Rudolf Sloboda, Miroslav Válek
+
+3. SVETOVÁ PRÓZA - vyber náhodne jedného autora:
+   - Erich Maria Remarque, Ernest Hemingway, Franz Kafka, Fjodor Dostojevskij, Lev Tolstoj, Gabriel García Márquez, George Orwell, Albert Camus, John Steinbeck, William Faulkner
+
+4. SVETOVÁ POÉZIA - vyber náhodne jedného autora:
+   - Alexander Puškin, Lord Byron, Charles Baudelaire, Pablo Neruda, Rainer Maria Rilke, Walt Whitman, Edgar Allan Poe, William Blake, Arthur Rimbaud, Paul Verlaine
+
+5. PUBLICISTICKÝ TEXT - vyber náhodnú tému:
+   - Veda a výskum, Zdravie a medicína, Psychológia, Spoločnosť a kultúra, Technológie, Životné prostredie, História, Umenie
+
+6. SLOVENSKÁ DRÁMA - vyber náhodne jedného autora:
+   - Jozef Gregor Tajovský, Ivan Stodola, Július Barč-Ivan, Peter Karvaš, Ivan Bukovčan, Ľubomír Feldek
+
+7. ESEJ/ÚVAHA - vyber náhodne jedného súčasného autora alebo tému:
+   - Osobná esej o identite, Filozofická úvaha o čase, Kritický pohľad na spoločnosť, Esej o umení, Úvaha o prírode a človeku
+
+8. LITERÁRNA KRITIKA - vyber náhodne typ:
+   - Recenzia poézie, Recenzia prózy, Kritika dramatu, Analýza literárneho diela, Porovnanie dvoch autorov
+
+⚠️ KRITICKÉ: Každý test MUSÍ mať RÔZNYCH autorov! Nepoužívaj Milo Urban 3x za sebou!
+
+DISTRIBÚCIA OTÁZOK PRE KAŽDÚ UKÁŽKU (8 otázok):
+- 3x porozumenie textu (STREDNÁ až ŤAŽKÁ obtiažnosť - vyžaduje analýzu, nie len čítanie)
+- 2x gramatika/syntax (konkrétne pravidlá - spodobovanie, vetné členy, skloňovanie)
+- 2x literárne pojmy/štýl (metafora, epiteton, rým, štýl - musí byť v texte)
+- 1x lexikológia (slovotvorba, slovné druhy, etymológia)
+
+⚠️ KRITICKÉ PRAVIDLÁ OBTIAŽNOSTI:
+- ZAKÁZANÉ ľahké otázky: "Napíšte názov článku", "Kto je autor", "Z ktorého média je text"
+- 20% ľahké = základné porozumenie ("Ktoré tvrdenie vyplýva z textu?")
+- 50% stredné = analýza ("Aký literárny prostriedok sa nachádza v...?")
+- 30% ťažké = hlboké porozumenie alebo kombinácia ("Ako autor využíva kontrast medzi...?")
+
+⚠️ ROZMANITOSŤ (KAŽDÁ OTÁZKA MUSÍ BYŤ INÁ):
+- Nepoužívaj 2 otázky o rovnakom literárnom prostriedku (nie 2x o metafore)
+- Nepoužívaj 2 otázky o rovnakom gramatickom jave (nie 2x o spodobovaní)
+- Striedaj aspekty: porozumenie → gramatika → literárny prostriedok → lexika → porozumenie...
+- Každá otázka testuje INÝ fragment textu alebo INÚ vlastnosť
 
 TYPY OTÁZOK MULTIPLE CHOICE - používaj presne tieto vzory:
 
-POROZUMENIE TEXTU:
-- "Ktoré tvrdenie vyplýva z ukážky?"
-- "Ktorá z nasledujúcich charakteristík postavy nevyplýva z ukážky?"
-- "Z ukážky vyplýva, že..."
+⚠️ MASTER QUESTION BANK - VYBER 5 OTÁZOK Z TEJTO BANKY PRE KAŽDÚ UKÁŽKU (VŠETKY MUSIA BYŤ RÔZNE):
 
-LITERÁRNE POJMY:
-- "V ktorej možnosti sa nachádza metafora/epiteton/personifikácia?"
-- "Aký druh rýmu použil autor?"
+KATEGÓRIA A - POROZUMENIE (vyber 3):
+1. "Ktoré tvrdenie vyplýva z ukážky?"
+2. "Ktorá z nasledujúcich charakteristík postavy/autora NEVYPLÝVA z ukážky?"
+3. "Z ukážky vyplýva, že autor/postava..."
+4. "Aký vzťah má postava X k postave Y podľa ukážky?"
+5. "Aký je hlavný odkaz/myšlienka ukážky?"
+6. "Ktoré tvrdenie o téme/prostredí je správne?"
 
-⚠️ NIKDY nepoužívaj otázky ktoré odkazujú na "zvýraznenú časť", "podčiarknuté slovo", alebo "vyznačený text" - v plain texte to nejde zobraziť!
+KATEGÓRIA B - GRAMATIKA (vyber 2):
+7. "V ktorej možnosti dochádza k znelostnej asimilácii/spodobovaniu?"
+8. "V ktorej možnosti sa nachádza neurčitý slovesný tvar?"
+9. "V ktorej vete sa nachádza priamy predmet/podmét/prísudok?"
+10. "Ktoré slovo patrí k INÉmu slovnému druhu ako ostatné?"
+11. "V ktorej vete je vetný člen vyjadrený inak?"
+12. "Ktoré slovo obsahuje predponu?"
+13. "V ktorej možnosti je použitý čas inak ako v ostatných?"
+14. "Ktoré slovo je ohnuté v inom páde ako ostatné?"
+
+KATEGÓRIA C - LITERÁRNE POJMY (vyber 2):
+15. "V ktorej možnosti sa nachádza metafora?"
+16. "Ktorý umelecký prostriedok dominuje v ukážke?" (epiteton/personifikácia/prirovnanie)
+17. "Aký druh rýmu použil autor?"
+18. "Ktorá veta obsahuje epiteton?"
+19. "V ktorej možnosti sa nachádza personifikácia?"
+20. "Aký je rozmer verša?"
+
+KATEGÓRIA D - ŠTÝL A KONTEXT (vyber 1):
+21. "Do ktorého literárneho obdobia patrí ukážka?"
+22. "Aký je dominantný štýl ukážky?" (hovorový/odborný/umelecký)
+23. "Ktorá charakteristika najlepšie vystihuje tón ukážky?"
+24. "Do ktorého žánru patrí ukážka?"
+
+⚠️ POVINNÉ PRAVIDLO: V 8 ukážkach NEMÔŽEŠ použiť rovnakú otázku 2x!
+Napríklad: Ak použiješ otázku #7 (spodobovanie) v ukážke 1, NEMÔŽEŠ ju použiť v ukážkach 2-8.
+
+TYPY OTÁZOK SHORT ANSWER - MASTER BANK (vyber 3 pre každú ukážku, VŠETKY RÔZNE):
+
+SHORT ANSWER KATEGÓRIA A - GRAMATIKA (vyber 2):
+1. "Vypíšte z ukážky slovo, v ktorom dochádza k [spodobovaniu/rytmickému kráteniu/vokalizácii]."
+2. "Napíšte základný tvar slovesa [X]."
+3. "Určte slovný druh slova [X]."
+4. "Vypíšte z ukážky [prídavné meno/príslovku/spojku]."
+5. "Napíšte slovo [X] v tvare [genitívu/datívu/akuzatívu] singuláru."
+6. "Pomenujte vetný sklad vety: '[citácia]'."
+7. "Koľko viet obsahuje nasledujúce súvetie: '[citácia]'?"
+
+SHORT ANSWER KATEGÓRIA B - LITERÁRNA TEÓRIA (vyber 1):
+8. "Pomenujte literárny prostriedok v [konkrétnej časti textu]."
+9. "Napíšte názov slovotvorného postupu, ktorým vzniklo slovo [X]."
+10. "Do ktorého literárneho obdobia/smeru patrí autor?"
+11. "Aký typ rýmu je použitý v básni?"
+12. "Napíšte meno autora tejto ukážky." (iba ak nie je uvedené v hlavičke!)
+
+⚠️ POVINNÉ: Každá ukážka musí mať INÚ kombináciu 3 short answer otázok!
+
+⚠️ CRITICAL: Sleduj ktoré otázky si už použil a NIKDY ich neopakuj v rámci jedného testu!
+
+⚠️ POUŽÍVAJ LEN OTÁZKY Z MASTER QUESTION BANK VYŠŠIE!
 
 GRAMATIKA:
 - "V ktorej možnosti dochádza k znelostnej asimilácii/spodobovaniu?"
 - "V ktorej možnosti sa nachádza neurčitý slovesný tvar?"
 - "V ktorej vete sa nachádza priamy predmet?"
-- "Ktoré slovo sa od ostatných líši počtom slabík?"
+- "Ktoré slovo má inú časť reči ako ostatné?" (namiesto počítania slabík)
+- "V ktorej vete je prísudok vyjadrený inak ako v ostatných?"
+- "Ktoré slovo je zložené z predpony, koreňa a prípony?"
 
-LITERÁRNA HISTÓRIA:
-- "Do ktorej literatúry/literárneho obdobia zaraďujeme tvorbu autora?"
-- "Do ktorého literárneho smeru sa zaraďuje prevažná časť tvorby autora?"
+⚠️ ZAKÁZANÉ repetitívne otázky:
+- NIKDY sa nepýtaj "Koľko slabík má slovo X?" viac ako 1x v celom teste
+- NIKDY sa nepýtaj rovnakú otázku s inou variantou (napr. "Ktoré slovo sa líši počtom slabík?" = tiež počítanie slabík)
+- AI často robí chyby v počítaní slabík - VYHÝBAJ SA tejto otázke úplne!
 
-TYPY OTÁZOK SHORT ANSWER - používaj presne tieto vzory:
+⚠️ ROTÁCIA OTÁZOK - pre každú ukážku vyber INÉ typy:
+Ukážka 1: spodobovanie, priamy predmet, epiteton
+Ukážka 2: slovesný tvar, vetný člen, personifikácia  
+Ukážka 3: slovotvorba, súvetie, metafora
+Atď. - NIKDY neopakuj kombináciu!
 
-GRAMATIKA:
-- "Vypíšte z ukážky slovo, v ktorom dochádza k..." (správna odpoveď: 1 slovo)
-- "Napíšte slovo [X] v tvare genitívu singuláru." (správna odpoveď: skloňovaný tvar)
-- "Vypíšte z ukážky neplnovýznamové fázové sloveso." (správna odpoveď: napr. "začal")
-- "Napíšte základný tvar slovesa..." (správna odpoveď: infinitív)
-
-SYNTAX:
-- "Pomenujte vetný sklad v nasledujúcej vete." (správna odpoveď: napr. "prisudzovací")
-
-LITERÁRNA HISTÓRIA:
-- "Napíšte názov diela [autora]..." (správna odpoveď: názov diela)
-- "Do ktorého literárneho smeru sa zaraďuje autor?" (správna odpoveď: napr. "romantizmus")
-
-LEXIKOLÓGIA:
-- "Napíšte názov slovotvorného postupu..." (správna odpoveď: napr. "skladanie")
-- "Vypíšte z ukážky slovo cudzieho pôvodu..." (správna odpoveď: 1 slovo)
-
-PRAVOPIS:
-- "Vypíšte z ukážky domáce slovo so zdvojenou spoluhláskou." (správna odpoveď: napr. "denný")
+⚠️ KAŽDÁ UKÁŽKA MUSÍ MAŤ INAKŠIU KOMBINÁCIU OTÁZOK!
 
 PRÍKLADY REÁLNYCH OTÁZOK Z NÚCEM TESTOV:
 
@@ -689,6 +940,24 @@ POŽIADAVKY NA GENEROVANÝ TEST:
 8. Príklad: Text "Bol to [[krásny deň]], plný slnka." + otázka "Aký slovný druh je zvýraznené slovné spojenie?"
 9. Značka [[...]] sa zobrazí ako žltý highlight v texte
 
+⚠️ ZAKÁZANÉ TYPY OTÁZOK:
+- NIKDY sa nepýtaj "Napíšte názov článku/ukážky" - je to triviálne, názov je uvedený nad textom
+- NIKDY nepoužívaj otázky ako "Napíšte názov diela autora X" bez konkrétneho kontextu - autor môže mať 20 diel
+- NIKDY sa neopakuj - každá otázka MUSÍ byť unikátna (iná téma, iný aspekt textu)
+- NIKDY sa nepýtaj na informácie priamo uvedené v titulke/metadátach
+- Otázky musia testovať POROZUMENIE, ANALÝZU alebo GRAMATIKU - nie memorovanie základných faktov
+
+SPRÁVNE short answer otázky:
+✓ "Vypíšte z ukážky slovo, v ktorom dochádza k spodobovaniu" - presná odpoveď z textu
+✓ "Napíšte základný tvar slovesa 'išiel'" - jednoznačná odpoveď (ísť)
+✓ "Pomenujte vetný sklad vety: 'Prší.'" - jednoznačná odpoveď (slovesno-menný)
+✓ "Do ktorého literárneho smeru patrí autor tejto ukážky?" - vyplýva z kontextu a štýlu
+
+NESPRÁVNE short answer otázky:
+✗ "Napíšte názov článku" - je to v titulke, nie je to test znalostí
+✗ "Napíšte názov diela Ivana Krasku" - má viac diel, nemožno určiť ktoré
+✗ "Z ktorého zdroja pochádza tento text?" - v titulke je "Denník N", triviálne
+
 VÝSTUPNÝ JSON FORMÁT:
 {
   "blocks": [
@@ -723,71 +992,6 @@ KRITICKÉ PRAVIDLÁ:
 - Nepoužívaj frázy ako "based on", "according to" - píš prirodzene po slovensky
 - Short answer odpovede musia byť PRESNÉ (nie "približne" ani "možno")
 - Každý text musí byť iný žáner`;
-
-            const userPrompt = `Vygeneruj komplexný test na slovenskú maturity (NÚCEM štýl) presne podľa špecifikácie.
-
-DISTRIBÚCIA 8 UKÁŽOK:
-1. Klasická slovenská próza (Milo Urban / Jozef Cíger Hronský)
-2. Slovenská poézia (Ivan Krasko / Ján Smrek)
-3. Svetová próza (Erich Maria Remarque)
-4. Svetová poézia (Alexander Puškin / Lord Byron)
-5. Publicistický text (náučno-populárny článok o psychológii/vede)
-6. Slovenská dráma (Jozef Gregor Tajovský)
-7. Súčasná esej/úvaha
-8. Literárna kritika
-
-⚠️ DÔLEŽITÉ - ROZMANITOSŤ:
-- Každá ukážka MUSÍ byť od INÉHO autora
-- Nepoužívaj rovnaké dielo 2x (napr. ak použiješ "Živý bič", nepoužívaj ho znova)
-- Variuj literárne obdobia (nie všetko z rovnakého obdobia)
-- Striedaj témy (jeden o prírode, druhý o láske, tretí o vojne, atď.)
-
-Každá ukážka: presne 8 otázok (5 MC + 3 short answer).
-
-Vráť VÝLUČNE validný JSON bez akýchkoľvek MarkDown blokov, úvodných textov alebo vysvetlení.`;
-
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${config.openaiKey}`
-                },
-                body: JSON.stringify({
-                    model: 'gpt-4o',
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userPrompt }
-                    ],
-                    temperature: 0.9,
-                    response_format: { type: "json_object" }
-                })
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error?.message || 'OpenAI API error');
-            }
-
-            const result = await response.json();
-            const content = result.choices[0].message.content;
-            
-            // Parse JSON (handle potential wrapper)
-            let parsed;
-            try {
-                parsed = JSON.parse(content);
-            } catch (e) {
-                // Try to extract JSON from markdown code blocks
-                const jsonMatch = content.match(/```json\n?([\s\S]*?)\n?```/);
-                if (jsonMatch) {
-                    parsed = JSON.parse(jsonMatch[1]);
-                } else {
-                    parsed = JSON.parse(content);
-                }
-            }
-            
-            return parsed;
-        }
-
         // ============================================
         // APP STATE
         // ============================================
