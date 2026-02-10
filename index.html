@@ -334,7 +334,7 @@
             <input type="text" id="openaiKey" placeholder="OpenAI API Key (sk-proj-...)">
             
             <br><br>
-            <button class="button" id="saveConfigBtn">💾 Uložiť a pokračovať</button>
+            <button class="button" id="saveConfigBtn" onclick="window.saveConfigHandler()">💾 Uložiť a pokračovať</button>
         </div>
 
         <!-- Main App (initially hidden) -->
@@ -431,9 +431,12 @@
         }
 
         function saveConfig() {
+            console.log('saveConfig called!');
             const url = document.getElementById('supabaseUrl').value.trim();
             const key = document.getElementById('supabaseKey').value.trim();
             const openai = document.getElementById('openaiKey').value.trim();
+
+            console.log('Values:', { url, key: key.substring(0, 20) + '...', openai: openai.substring(0, 20) + '...' });
 
             if (!url || !key || !openai) {
                 alert('Prosím vyplňte všetky polia!');
@@ -443,11 +446,17 @@
             config = { supabaseUrl: url, supabaseKey: key, openaiKey: openai };
             localStorage.setItem('maturita_config', JSON.stringify(config));
             
+            console.log('Config saved, initializing Supabase...');
             initializeSupabase();
+            
+            console.log('Hiding setup screen...');
             document.getElementById('setupScreen').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
             init();
         }
+
+        // Global handler for onclick
+        window.saveConfigHandler = saveConfig;
 
         function initializeSupabase() {
             supabase = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
