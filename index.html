@@ -83,6 +83,13 @@
             white-space: pre-wrap;
         }
 
+        .highlight {
+            background: #ffeb3b;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+
         .question {
             margin-bottom: 25px;
             padding: 15px;
@@ -558,8 +565,9 @@ POROZUMENIE TEXTU:
 
 LITERÁRNE POJMY:
 - "V ktorej možnosti sa nachádza metafora/epiteton/personifikácia?"
-- "Ktorý umelecký jazykový prostriedok sa nachádza vo zvýraznenej časti?"
 - "Aký druh rýmu použil autor?"
+
+⚠️ NIKDY nepoužívaj otázky ktoré odkazujú na "zvýraznenú časť", "podčiarknuté slovo", alebo "vyznačený text" - v plain texte to nejde zobraziť!
 
 GRAMATIKA:
 - "V ktorej možnosti dochádza k znelostnej asimilácii/spodobovaniu?"
@@ -647,7 +655,14 @@ GRAMATICKÉ PRAVIDLÁ NA TESTOVANIE:
 PRÍKLAD TEXTOVEJ UKÁŽKY (Klasická slovenská próza):
 Názov: Živý bič
 Autor: Milo Urban
-Text: "Ale vtedy, asi po troch rokoch, na jar, prišiel do Ráztok človek v zaprášenej vojenskej uniforme, odstávajúcej od predčasne vyschnutého tela. Bol nahnutý k zemi, a ako šiel, vietor, čo dobehol časom od hôr, svieži, ihravý, nadnášal mu pravý rukáv, v ktorom nebolo ruky. Tvárou od pravého oka, trošku prižmúreného, tiahla sa mu dlhá jazva..."
+Text: "Ale vtedy, asi po troch rokoch, na jar, prišiel do Ráztok človek v zaprášenej vojenskej uniforme, odstávajúcej od predčasne vyschnutého tela. Bol nahnutý k zemi, a ako šiel, [[vietor, čo dobehol časom od hôr, svieži, ihravý]], nadnášal mu pravý rukáv, v ktorom nebolo ruky..."
+Ukážka otázky: "Ktorý umelecký prostriedok sa nachádza vo zvýraznenej časti?" → personifikácia
+
+PRÍKLAD TEXTOVEJ UKÁŽKY (Poézia):
+Názov: Desiate prikázanie
+Autor: Alexander Sergejevič Puškin
+Text: "Majetok cudzí v úcte mať / káže nám [[zákon vekmi vžitý]]; / nemať tak, bože, nežné city, / vedel by som ho dodržať."
+Ukážka otázky: "Koľko slabík má zvýraznené slovné spojenie?" → 7
 
 PRÍKLAD TEXTOVEJ UKÁŽKY (Poézia):
 Názov: Desiate prikázanie
@@ -666,6 +681,9 @@ POŽIADAVKY NA GENEROVANÝ TEST:
 4. Gramatické otázky musia testovať konkrétne pravidlá
 5. Short answer otázky musia mať JEDNU presne definovanú správnu odpoveď
 6. Multiple choice musí mať 4 možnosti (A, B, C, D)
+7. ⚠️ AK chceš použiť otázku o "zvýraznenej časti", použi značku [[text]] v ukážke na označenie zvýrazneného textu
+8. Príklad: Text "Bol to [[krásny deň]], plný slnka." + otázka "Aký slovný druh je zvýraznené slovné spojenie?"
+9. Značka [[...]] sa zobrazí ako žltý highlight v texte
 
 VÝSTUPNÝ JSON FORMÁT:
 {
@@ -870,10 +888,13 @@ Vráť VÝLUČNE validný JSON bez akýchkoľvek MarkDown blokov, úvodných tex
                     authorInfo = `<p class="author-info">${block.author}${block.genre ? ` • ${block.genre}` : ''}</p>`;
                 }
                 
+                // Convert [[text]] to <span class="highlight">text</span>
+                const highlightedText = block.text.replace(/\[\[(.*?)\]\]/g, '<span class="highlight">$1</span>');
+                
                 blockDiv.innerHTML = `
                     <h3>Ukážka ${blockIdx + 1}: ${block.title}</h3>
                     ${authorInfo}
-                    <div class="text-content">${block.text}</div>
+                    <div class="text-content">${highlightedText}</div>
                 `;
 
                 block.questions.forEach((q, qIdx) => {
