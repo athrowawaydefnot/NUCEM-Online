@@ -412,7 +412,7 @@
         // CONFIGURATION & INITIALIZATION
         // ============================================
         
-        let supabase;
+        let supabaseClient;
         let config = {
             supabaseUrl: '',
             supabaseKey: '',
@@ -459,7 +459,7 @@
         window.saveConfigHandler = saveConfig;
 
         function initializeSupabase() {
-            supabase = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
+            supabaseClient = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
         }
 
         // ============================================
@@ -469,7 +469,7 @@
         const dbStorage = {
             async getTodayTest() {
                 const today = new Date().toISOString().split('T')[0];
-                const { data, error } = await supabase
+                const { data, error } = await supabaseClient
                     .from('tests')
                     .select('*')
                     .eq('date', today)
@@ -483,7 +483,7 @@
             },
 
             async saveTest(test) {
-                const { data, error } = await supabase
+                const { data, error } = await supabaseClient
                     .from('tests')
                     .insert([test])
                     .select();
@@ -496,7 +496,7 @@
             },
 
             async submitScore(entry) {
-                const { data, error } = await supabase
+                const { data, error } = await supabaseClient
                     .from('leaderboard')
                     .insert([entry])
                     .select();
@@ -510,7 +510,7 @@
 
             async getLeaderboard() {
                 const today = new Date().toISOString().split('T')[0];
-                const { data, error } = await supabase
+                const { data, error } = await supabaseClient
                     .from('leaderboard')
                     .select('*')
                     .eq('date', today)
