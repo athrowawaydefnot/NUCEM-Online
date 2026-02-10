@@ -254,9 +254,24 @@
         }
 
         .leaderboard-item.top-3 {
-            background: linear-gradient(135deg, #ffd89b 0%, #19547b 100%);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             font-weight: 600;
+        }
+        
+        .leaderboard-item.rank-1 {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+        }
+        
+        .leaderboard-item.rank-2 {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
+        }
+        
+        .leaderboard-item.rank-3 {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+            box-shadow: 0 4px 15px rgba(67, 233, 123, 0.4);
         }
 
         .rank {
@@ -1339,9 +1354,10 @@ KRITICKÉ PRAVIDLÁ:
                     const minutes = Math.floor(entry.time_seconds / 60);
                     const seconds = entry.time_seconds % 60;
                     const isTop3 = idx < 3;
+                    const rankClass = idx === 0 ? 'rank-1' : idx === 1 ? 'rank-2' : idx === 2 ? 'rank-3' : '';
                     
                     return `
-                        <div class="leaderboard-item ${isTop3 ? 'top-3' : ''}">
+                        <div class="leaderboard-item ${isTop3 ? 'top-3 ' + rankClass : ''}">
                             <div>
                                 <span class="rank">#${idx + 1}</span>
                                 <strong>${entry.name}</strong>
