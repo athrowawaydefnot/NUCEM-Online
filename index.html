@@ -593,8 +593,6 @@
             },
 
             async updateQuestionUsage(questionIds) {
-                const today = new Date().toISOString().split('T')[0];
-                
                 for (const id of questionIds) {
                     const { data } = await supabaseClient
                         .from('question_templates')
@@ -605,8 +603,7 @@
                     await supabaseClient
                         .from('question_templates')
                         .update({ 
-                            usage_count: (data?.usage_count || 0) + 1,
-                            last_used: today 
+                            usage_count: (data?.usage_count || 0) + 1
                         })
                         .eq('id', id);
                 }
