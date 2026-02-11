@@ -569,10 +569,6 @@
                 
                 return [...mc, ...sa];
             },
-                const sa = shuffled.filter(q => q.question_type === 'short_answer').slice(0, 3);
-                
-                return [...mc, ...sa];
-            },
 
             async updateQuestionUsage(questionIds) {
                 const today = new Date().toISOString().split('T')[0];
