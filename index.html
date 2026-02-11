@@ -552,12 +552,12 @@
                 return data;
             },
 
-            async getRandomQuestions(textType, count) {
+            async getRandomQuestions(textType, count, excludedIds = new Set()) {
                 // Get questions that match text type
                 console.log('Fetching questions for:', textType);
                 
                 // Query for all questions
-                const { data, error } = await supabaseClient
+                const { data, error} = await supabaseClient
                     .from('question_templates')
                     .select('*')
                     .order('usage_count', { ascending: true })
@@ -570,11 +570,12 @@
 
                 console.log('Total questions fetched:', data.length);
 
-                // Filter in JavaScript for array contains
-                // Make sure to check if requires_text_type is an array
+                // Filter in JavaScript for array contains AND not already used
                 const filtered = data.filter(q => {
                     const types = Array.isArray(q.requires_text_type) ? q.requires_text_type : [];
-                    return types.includes(textType) || types.includes('any');
+                    const matchesType = types.includes(textType) || types.includes('any');
+                    const notExcluded = !excludedIds.has(q.id);
+                    return matchesType && notExcluded;
                 });
 
                 console.log('Filtered questions:', filtered.length);
@@ -627,11 +628,11 @@
             {type: 'any', desc: 'Literárna kritika', authors: 'recenzia alebo kritická analýza'}
         ];
 
-        async function generateSingleBlock(blockIndex) {
+        async function generateSingleBlock(blockIndex, excludedIds = new Set()) {
             const textInfo = TEXT_TYPES[blockIndex];
             
-            // 1. GET 8 QUESTIONS FROM DATABASE
-            const questions = await dbStorage.getRandomQuestions(textInfo.type, 8);
+            // 1. GET 8 QUESTIONS FROM DATABASE (excluding already used ones)
+            const questions = await dbStorage.getRandomQuestions(textInfo.type, 8, excludedIds);
             
             if (questions.length < 8) {
                 throw new Error(`Not enough questions for ${textInfo.type}. Found ${questions.length}, need 8.`);
@@ -662,12 +663,15 @@
         async function generateTest() {
             const blocks = [];
             const allQuestionIds = [];
+            const usedQuestionIds = new Set(); // Track used questions
             
             // Generate all 8 blocks
             for (let i = 0; i < 8; i++) {
-                const { block, questionIds } = await generateSingleBlock(i);
+                const { block, questionIds } = await generateSingleBlock(i, usedQuestionIds);
                 blocks.push(block);
                 allQuestionIds.push(...questionIds);
+                // Add these IDs to the used set
+                questionIds.forEach(id => usedQuestionIds.add(id));
             }
             
             // Track question usage
