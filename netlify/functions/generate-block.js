@@ -1,65 +1,72 @@
 // Netlify Function: Generate single block
-// Save this as: netlify/functions/generate-block.js
+// This version generates text FIRST, then answers questions about THAT text
 
 exports.handler = async (event, context) => {
-  // Only allow POST
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  // Parse request
-  const { blockIndex, textInfo, questions } = JSON.parse(event.body);
+  try {
+    const { blockIndex, textInfo, questions } = JSON.parse(event.body);
 
-  // Build question list
-  const questionList = questions.map((q, idx) => 
-    `${idx + 1}. [${q.question_type === 'multiple_choice' ? 'MC' : 'SA'}] ${q.question_template}`
-  ).join('\n');
+    // Build question list with templates
+    const questionList = questions.map((q, idx) => {
+      const type = q.question_type === 'multiple_choice' ? 'MC' : 'SA';
+      return `${idx + 1}. [${type}] ${q.question_template}`;
+    }).join('\n');
 
-  const aiPrompt = `Vygeneruj textovú ukážku pre NÚCEM test.
+    const aiPrompt = `Vygeneruj textovú ukážku pre NÚCEM test a potom na ňu vytvor otázky.
 
-TYP: ${textInfo.desc}
-AUTOR/TÉMA: Vyber náhodne z: ${textInfo.authors}
-DĹŽKA: 200-300 slov
+KROK 1 - VYGENERUJ TEXT:
+- Typ: ${textInfo.desc}
+- Autor/téma: ${textInfo.authors}
+- Dĺžka: 200-300 slov
+- Text MUSÍ obsahovať elementy potrebné na otázky (gramatické javy, literárne prostriedky, konkrétne slová)
 
-Potom ODPOVEDZ na tieto KONKRÉTNE otázky o tvojom texte:
-
+KROK 2 - VYTVOR OTÁZKY PODĽA TÝCHTO ŠABLÓN:
 ${questionList}
 
-FORMÁT ODPOVEDE - vráť validný JSON:
+⚠️ KRITICKÉ PRAVIDLÁ:
+1. Otázky MUSIA byť o KONKRÉTNOM texte, ktorý si práve napísal
+2. Ak otázka hovorí "Vypíšte z ukážky..." - musí existovať konkrétne slovo v texte
+3. Ak otázka hovorí "V ktorej možnosti..." - všetky možnosti musia byť z textu alebo o texte
+4. NIKDY nevymýšľaj otázky o veciach, ktoré NIE SÚ v texte!
+5. Pre gramatické otázky (spodobovanie, slovný druh): text MUSÍ obsahovať jasné príklady
+6. Pre literárne prostriedky (metafora, epiteton): text ich MUSÍ obsahovať
+
+FORMÁT ODPOVEDE (validný JSON):
 {
-  "title": "Názov diela/textu",
-  "text": "Celý text ukážky (200-300 slov). Použi [[text]] na zvýraznenie ak treba.",
+  "title": "Názov diela",
+  "text": "Celý text (200-300 slov). [[zvýraznený text]] ak treba.",
   "author": "Meno autora",
   "genre": "${textInfo.type}",
   "questions": [
     {
       "id": 1,
-      "question": "presný text otázky",
+      "question": "Konkrétna otázka o TOMTO texte",
       "type": "multiple_choice",
-      "options": ["(A) možnosť 1", "(B) možnosť 2", "(C) možnosť 3", "(D) možnosť 4"],
+      "options": ["(A) z textu", "(B) z textu", "(C) z textu", "(D) z textu"],
       "correct": "A"
     },
     {
       "id": 2,
-      "question": "presný text otázky",
+      "question": "Otázka s jasnou odpoveďou",
       "type": "short_answer",
       "correct": "presná odpoveď"
     }
   ]
 }
 
-PRAVIDLÁ:
-- Text MUSÍ byť 200-300 slov, realistický
-- Multiple choice: 4 možnosti, odpoveď iba "A", "B", "C" alebo "D"
-- Short answer: PRESNÁ odpoveď (1-3 slová)
-- Ak otázka vyžaduje gramatiku (spodobovanie, slovný druh), text MUSÍ obsahovať príklady
-- Ak otázka vyžaduje literárny prostriedok (metafora), text MUSÍ ho obsahovať
-- Použitím [[text]] v texte vytvoríš zvýraznenie
+PRAVIDLÁ PRE ODPOVEDE:
+- Multiple choice: odpoveď iba "A", "B", "C" alebo "D" (NIE "(A)")
+- Short answer: PRESNÁ odpoveď (1-3 slová), nie viac variant
+- Všetky 4 možnosti v MC musia dávať zmysel
+- Správna odpoveď musí byť jednoznačne správna
+- Nesprávne odpovede musia byť zjavne nesprávne
 
-Vráť VÝLUČNE validný JSON bez markdown blokov.`;
+Vráť VÝLUČNE validný JSON.`;
 
-  try {
-    // Call OpenAI API
+    // Call OpenAI
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -69,10 +76,13 @@ Vráť VÝLUČNE validný JSON bez markdown blokov.`;
       body: JSON.stringify({
         model: 'gpt-4o',
         messages: [
-          { role: 'system', content: 'Si expert na tvorbu textov pre slovenské maturitné testy NÚCEM. Vraciaš VÝLUČNE validný JSON.' },
+          { 
+            role: 'system', 
+            content: 'Si expert na slovenské maturitné testy. VŽDY píš otázky o KONKRÉTNOM texte, nie všeobecné otázky. Vraciaš VÝLUČNE validný JSON.' 
+          },
           { role: 'user', content: aiPrompt }
         ],
-        temperature: 0.9,
+        temperature: 0.8,
         response_format: { type: "json_object" }
       })
     });
@@ -100,6 +110,20 @@ Vráť VÝLUČNE validný JSON bez markdown blokov.`;
         throw new Error('Failed to parse AI response');
       }
     }
+
+    // Validate answers
+    parsed.questions.forEach((q, idx) => {
+      if (q.type === 'multiple_choice') {
+        // Clean correct answer - remove any "(A)" formatting, keep just "A"
+        q.correct = q.correct.replace(/[()]/g, '').trim().toUpperCase();
+        
+        // Validate it's A, B, C, or D
+        if (!['A', 'B', 'C', 'D'].includes(q.correct)) {
+          console.error(`Invalid MC answer for question ${idx + 1}:`, q.correct);
+          q.correct = 'A'; // Default to A if invalid
+        }
+      }
+    });
     
     return {
       statusCode: 200,
@@ -113,6 +137,7 @@ Vráť VÝLUČNE validný JSON bez markdown blokov.`;
       })
     };
   } catch (error) {
+    console.error('Error:', error);
     return {
       statusCode: 500,
       body: JSON.stringify({ error: error.message })
