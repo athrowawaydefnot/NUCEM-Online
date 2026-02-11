@@ -552,66 +552,10 @@
                 return data;
             },
 
-            async getRandomQuestions(textType, count, excludedIds = new Set()) {
-                // Get questions that match text type
-                console.log('Fetching questions for:', textType);
-                
-                // Query for all questions
-                const { data, error} = await supabaseClient
-                    .from('question_templates')
-                    .select('*')
-                    .order('usage_count', { ascending: true })
-                    .limit(count * 10); // Get MORE for filtering
-
-                if (error) {
-                    console.error('Error fetching questions:', error);
-                    return [];
-                }
-
-                console.log('Total questions fetched:', data.length);
-
-                // Filter in JavaScript for array contains AND not already used
-                const filtered = data.filter(q => {
-                    const types = Array.isArray(q.requires_text_type) ? q.requires_text_type : [];
-                    const matchesType = types.includes(textType) || types.includes('any');
-                    const notExcluded = !excludedIds.has(q.id);
-                    return matchesType && notExcluded;
-                });
-
-                console.log('Filtered questions:', filtered.length);
-
-                // Shuffle
-                const shuffled = filtered.sort(() => Math.random() - 0.5);
-                
-                // Ensure mix of MC and SA (5 MC, 3 SA per ukážka)
-                const mc = shuffled.filter(q => q.question_type === 'multiple_choice').slice(0, 5);
-                const sa = shuffled.filter(q => q.question_type === 'short_answer').slice(0, 3);
-                
-                console.log('Selected MC:', mc.length, 'SA:', sa.length);
-                
-                return [...mc, ...sa];
-            },
-
-            async updateQuestionUsage(questionIds) {
-                for (const id of questionIds) {
-                    const { data } = await supabaseClient
-                        .from('question_templates')
-                        .select('usage_count')
-                        .eq('id', id)
-                        .single();
-                    
-                    await supabaseClient
-                        .from('question_templates')
-                        .update({ 
-                            usage_count: (data?.usage_count || 0) + 1
-                        })
-                        .eq('id', id);
-                }
-            }
         };
 
         // ============================================
-        // AI TEST GENERATION (USING QUESTION BANK)
+        // AI TEST GENERATION (NEW 2-PHASE APPROACH)
         // ============================================
         
         const TEXT_TYPES = [
@@ -625,64 +569,118 @@
             {type: 'any', desc: 'Literárna kritika', authors: 'recenzia alebo kritická analýza'}
         ];
 
-        async function generateSingleBlock(blockIndex, excludedIds = new Set()) {
+        async function generateSingleText(blockIndex) {
             const textInfo = TEXT_TYPES[blockIndex];
             
-            // 1. GET 8 QUESTIONS FROM DATABASE (excluding already used ones)
-            const questions = await dbStorage.getRandomQuestions(textInfo.type, 8, excludedIds);
+            try {
+                const response = await fetch('/.netlify/functions/generate-text', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        blockIndex: blockIndex,
+                        textInfo: textInfo
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                return data.text;
+                
+            } catch (error) {
+                console.error('Error generating text:', error);
+                throw new Error(`Nepodarilo sa vygenerovať text: ${error.message}`);
+            }
+        }
+        
+        async function generateQuestionsForText(blockIndex, textData) {
+            const textInfo = TEXT_TYPES[blockIndex];
             
-            if (questions.length < 8) {
-                throw new Error(`Not enough questions for ${textInfo.type}. Found ${questions.length}, need 8.`);
+            try {
+                const response = await fetch('/.netlify/functions/generate-questions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        blockIndex: blockIndex,
+                        textInfo: textInfo,
+                        textData: textData
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                return data.questions;
+                
+            } catch (error) {
+                console.error('Error generating questions:', error);
+                throw new Error(`Nepodarilo sa vytvoriť otázky: ${error.message}`);
             }
-
-            // 2. CALL NETLIFY FUNCTION (server-side API call)
-            const response = await fetch('/.netlify/functions/generate-block', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    blockIndex,
-                    textInfo,
-                    questions
-                })
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Failed to generate block');
-            }
-
-            const result = await response.json();
-            return result;
         }
 
         async function generateTest() {
             const blocks = [];
-            const allQuestionIds = [];
-            const usedQuestionIdsByType = {}; // Track per text type
             
-            // Generate all 8 blocks
+            updateLoadingMessage('🎨 Generujem 8 textových ukážok...');
+            
+            // PHASE 1: Generate all 8 texts first
+            const texts = [];
             for (let i = 0; i < 8; i++) {
-                const textType = TEXT_TYPES[i].type;
-                
-                // Initialize Set for this text type if needed
-                if (!usedQuestionIdsByType[textType]) {
-                    usedQuestionIdsByType[textType] = new Set();
+                updateLoadingMessage(`📝 Generujem ukážku ${i + 1}/8: ${TEXT_TYPES[i].desc}...`);
+                try {
+                    const text = await generateSingleText(i);
+                    texts.push(text);
+                } catch (error) {
+                    showError(`Chyba pri generovaní ukážky ${i + 1}: ${error.message}`);
+                    throw error;
                 }
-                
-                const { block, questionIds } = await generateSingleBlock(i, usedQuestionIdsByType[textType]);
-                blocks.push(block);
-                allQuestionIds.push(...questionIds);
-                
-                // Add these IDs to the used set FOR THIS TEXT TYPE ONLY
-                questionIds.forEach(id => usedQuestionIdsByType[textType].add(id));
             }
             
-            // Track question usage
-            await dbStorage.updateQuestionUsage(allQuestionIds);
+            updateLoadingMessage('✅ Všetky ukážky vygenerované! Teraz vytváram otázky...');
+            
+            // PHASE 2: Generate questions for each text
+            for (let i = 0; i < 8; i++) {
+                updateLoadingMessage(`❓ Vytváram 8 otázok pre ukážku ${i + 1}/8...`);
+                try {
+                    const questions = await generateQuestionsForText(i, texts[i]);
+                    blocks.push({
+                        ...texts[i],
+                        questions: questions
+                    });
+                } catch (error) {
+                    showError(`Chyba pri vytváraní otázok pre ukážku ${i + 1}: ${error.message}`);
+                    throw error;
+                }
+            }
+            
+            updateLoadingMessage('🎉 Test kompletný!');
             
             return { blocks };
+        }
+        
+        function updateLoadingMessage(message) {
+            const loadingText = document.querySelector('#loadingScreen p');
+            if (loadingText) {
+                loadingText.textContent = message;
+            }
+        }
+        
+        function showError(message) {
+            const loadingScreen = document.getElementById('loadingScreen');
+            loadingScreen.innerHTML = `
+                <div style="text-align: center;">
+                    <div style="font-size: 48px; margin-bottom: 20px;">❌</div>
+                    <h2 style="color: #ef4444;">Nastala chyba</h2>
+                    <p style="margin: 20px 0; color: #666;">${message}</p>
+                    <button onclick="location.reload()" class="button">Skúsiť znova</button>
+                </div>
+            `;
         }
             const systemPrompt = `Si expert na tvorbu testov pre slovenskú maturity (NÚCEM - Slovenský jazyk a literatúra, externá časť).
 
