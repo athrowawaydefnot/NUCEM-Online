@@ -663,15 +663,23 @@
         async function generateTest() {
             const blocks = [];
             const allQuestionIds = [];
-            const usedQuestionIds = new Set(); // Track used questions
+            const usedQuestionIdsByType = {}; // Track per text type
             
             // Generate all 8 blocks
             for (let i = 0; i < 8; i++) {
-                const { block, questionIds } = await generateSingleBlock(i, usedQuestionIds);
+                const textType = TEXT_TYPES[i].type;
+                
+                // Initialize Set for this text type if needed
+                if (!usedQuestionIdsByType[textType]) {
+                    usedQuestionIdsByType[textType] = new Set();
+                }
+                
+                const { block, questionIds } = await generateSingleBlock(i, usedQuestionIdsByType[textType]);
                 blocks.push(block);
                 allQuestionIds.push(...questionIds);
-                // Add these IDs to the used set
-                questionIds.forEach(id => usedQuestionIds.add(id));
+                
+                // Add these IDs to the used set FOR THIS TEXT TYPE ONLY
+                questionIds.forEach(id => usedQuestionIdsByType[textType].add(id));
             }
             
             // Track question usage
