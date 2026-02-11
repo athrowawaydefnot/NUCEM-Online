@@ -443,6 +443,19 @@
             <!-- Leaderboard Screen -->
             <div class="card hidden" id="leaderboardScreen">
                 <h2 style="color: #667eea; margin-bottom: 20px;">🏆 Denný rebríček</h2>
+                
+                <div style="margin-bottom: 20px; text-align: center;">
+                    <label for="leaderboardDate" style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                        📅 Vyber dátum:
+                    </label>
+                    <input 
+                        type="date" 
+                        id="leaderboardDate" 
+                        style="padding: 10px 15px; border: 2px solid #667eea; border-radius: 8px; font-size: 16px; cursor: pointer;"
+                        onchange="showLeaderboard()"
+                    />
+                </div>
+                
                 <div class="leaderboard" id="leaderboardContent"></div>
                 <div style="text-align: center; margin-top: 20px;">
                     <button class="button" onclick="showWelcome()">← Späť</button>
@@ -523,12 +536,12 @@
                 return data[0];
             },
 
-            async getLeaderboard() {
-                const today = new Date().toISOString().split('T')[0];
+            async getLeaderboard(date) {
+                const targetDate = date || new Date().toISOString().split('T')[0];
                 const { data, error } = await supabaseClient
                     .from('leaderboard')
                     .select('*')
-                    .eq('date', today)
+                    .eq('date', targetDate)
                     .order('score', { ascending: false })
                     .order('time_seconds', { ascending: true });
                 
@@ -1277,12 +1290,30 @@ KRITICKÉ PRAVIDLÁ:
 
         async function showLeaderboard() {
             showScreen('loadingScreen');
-            const leaderboard = await dbStorage.getLeaderboard();
+            
+            // Get or set the date picker value
+            const datePicker = document.getElementById('leaderboardDate');
+            if (!datePicker.value) {
+                // Set default to today
+                const today = new Date().toISOString().split('T')[0];
+                datePicker.value = today;
+            }
+            
+            const selectedDate = datePicker.value;
+            const leaderboard = await dbStorage.getLeaderboard(selectedDate);
             
             const container = document.getElementById('leaderboardContent');
             
+            // Format the date nicely for display
+            const dateObj = new Date(selectedDate + 'T00:00:00');
+            const dateStr = dateObj.toLocaleDateString('sk-SK', { 
+                day: 'numeric', 
+                month: 'long', 
+                year: 'numeric' 
+            });
+            
             if (leaderboard.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: #888;">Zatiaľ nikto nevyplnil dnešný test.</p>';
+                container.innerHTML = `<p style="text-align: center; color: #888;">Zatiaľ nikto nevyplnil test zo dňa ${dateStr}.</p>`;
             } else {
                 container.innerHTML = leaderboard.map((entry, idx) => {
                     const minutes = Math.floor(entry.time_seconds / 60);
