@@ -541,24 +541,30 @@
 
             async getRandomQuestions(textType, count) {
                 // Get questions that match text type
-                // (Removed 7-day filter - will add back once we have more questions)
+                console.log('Fetching questions for:', textType);
                 
                 // Query for all questions
                 const { data, error } = await supabaseClient
                     .from('question_templates')
                     .select('*')
                     .order('usage_count', { ascending: true })
-                    .limit(count * 4); // Get extra for filtering
+                    .limit(count * 10); // Get MORE for filtering
 
                 if (error) {
                     console.error('Error fetching questions:', error);
                     return [];
                 }
 
+                console.log('Total questions fetched:', data.length);
+
                 // Filter in JavaScript for array contains
-                const filtered = data.filter(q => 
-                    q.requires_text_type.includes(textType) || q.requires_text_type.includes('any')
-                );
+                // Make sure to check if requires_text_type is an array
+                const filtered = data.filter(q => {
+                    const types = Array.isArray(q.requires_text_type) ? q.requires_text_type : [];
+                    return types.includes(textType) || types.includes('any');
+                });
+
+                console.log('Filtered questions:', filtered.length);
 
                 // Shuffle
                 const shuffled = filtered.sort(() => Math.random() - 0.5);
@@ -566,6 +572,8 @@
                 // Ensure mix of MC and SA (5 MC, 3 SA per ukážka)
                 const mc = shuffled.filter(q => q.question_type === 'multiple_choice').slice(0, 5);
                 const sa = shuffled.filter(q => q.question_type === 'short_answer').slice(0, 3);
+                
+                console.log('Selected MC:', mc.length, 'SA:', sa.length);
                 
                 return [...mc, ...sa];
             },
